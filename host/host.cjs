@@ -11,15 +11,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const qrcode = require("qrcode-terminal");
-const { loadEnvDefaults } = require("./env.cjs");
+const { applyPartyRcDefaults } = require("./partyRc.cjs");
 const { createNodePeer } = require("./nodePeer.cjs");
 
-const ROOT_DIR = path.join(__dirname, "..");
-const DATA_DIR = path.join(__dirname, "data");
+const DEFAULT_DATA_DIR = path.join(__dirname, "data");
 const PROTOCOL = 1;
 const DEFAULT_APP_URL = "http://localhost:4273/";
 const DEFAULT_LOCATION_PIN = { lat: 40.6782, lng: -73.9442, zoom: 13 };
-const ENV_FILE = path.join(ROOT_DIR, ".env");
 
 function parseArgs(argv) {
   const args = {
@@ -31,6 +29,7 @@ function parseArgs(argv) {
     description: process.env.DESCRIPTION || "Bring a friend, a snack, and one song for the shared playlist.",
     appUrl: process.env.APP_URL || process.env.HOST_URL || DEFAULT_APP_URL,
     roomSecret: process.env.ROOM_SECRET || "",
+    dataDir: process.env.PARTY_P2P_DATA_DIR || DEFAULT_DATA_DIR,
     theme: process.env.THEME || "sunset",
     iceServers: process.env.ICE_SERVERS || "stun:stun.l.google.com:19302"
   };
@@ -50,6 +49,7 @@ function parseArgs(argv) {
       case "app-url": args.appUrl = value; index += 1; break;
       case "host-url": args.appUrl = value; index += 1; break;
       case "secret": args.roomSecret = value; index += 1; break;
+      case "data-dir": args.dataDir = value; index += 1; break;
       case "ice": args.iceServers = value; index += 1; break;
       default:
         console.warn(`Unknown option: ${token}`);
@@ -57,7 +57,17 @@ function parseArgs(argv) {
   }
 
   args.room = slugifyRoom(args.room);
+  args.dataDir = path.resolve(args.dataDir);
   return args;
+}
+
+function attachDataDir(store, dataDir) {
+  Object.defineProperty(store, "dataDir", {
+    value: dataDir,
+    configurable: true,
+    writable: true
+  });
+  return store;
 }
 
 function slugifyRoom(value) {
@@ -156,15 +166,15 @@ function defaultState(args) {
   };
 }
 
-function stateFile(roomName) {
-  return path.join(DATA_DIR, `${roomName}.json`);
+function stateFile(dataDir, roomName) {
+  return path.join(dataDir, `${roomName}.json`);
 }
 
 function loadStore(args) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const file = stateFile(args.room);
+  fs.mkdirSync(args.dataDir, { recursive: true });
+  const file = stateFile(args.dataDir, args.room);
   if (fs.existsSync(file)) {
-    const store = JSON.parse(fs.readFileSync(file, "utf8"));
+    const store = attachDataDir(JSON.parse(fs.readFileSync(file, "utf8")), args.dataDir);
     if (args.roomSecret && args.roomSecret !== store.roomSecret) {
       console.warn("Using ROOM_SECRET/--secret from CLI instead of saved room secret.");
       store.roomSecret = args.roomSecret;
@@ -173,21 +183,21 @@ function loadStore(args) {
     store.seenMutations ||= [];
     return store;
   }
-  const store = {
+  const store = attachDataDir({
     roomName: args.room,
     roomPeerId: roomToPeerId(args.room),
     roomSecret: args.roomSecret || randomSecret(),
     admins: {},
     seenMutations: [],
     state: defaultState(args)
-  };
+  }, args.dataDir);
   saveStore(store);
   return store;
 }
 
 function saveStore(store) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(stateFile(store.roomName), JSON.stringify(store, null, 2));
+  fs.mkdirSync(store.dataDir, { recursive: true });
+  fs.writeFileSync(stateFile(store.dataDir, store.roomName), JSON.stringify(store, null, 2));
 }
 
 function touchState(store) {
@@ -327,7 +337,7 @@ function applyMutation(store, mutation, role) {
 }
 
 async function main() {
-  loadEnvDefaults(ENV_FILE);
+  applyPartyRcDefaults();
   const args = parseArgs(process.argv.slice(2));
   const store = loadStore(args);
   const roomPeerId = store.roomPeerId || roomToPeerId(args.room);
@@ -374,6 +384,7 @@ async function main() {
     console.log(`Room peer:   ${id}`);
     console.log("Signaling:   PeerJS Cloud");
     console.log(`App URL:     ${appUrl}`);
+    console.log(`Data file:   ${stateFile(store.dataDir, store.roomName)}`);
     console.log(`Invite URL:  ${shareUrl}\n`);
     qrcode.generate(shareUrl, { small: true });
     console.log("\nKeep this process running while guests are connected. Press Ctrl+C to stop.\n");

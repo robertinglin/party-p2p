@@ -34,15 +34,18 @@ npm run host:demo
 
 Open the printed invite URL or scan the terminal QR code. Keep the host process running while guests are connected.
 
-Host URL defaults live in `.env`:
+Host URL defaults live in `~/.party-p2p/.partyrc`:
 
-```bash
-HOST_URL=https://robertinglin.github.io/party-p2p/
+```json
+{
+  "host": "https://robertinglin.github.io/party-p2p/"
+}
 ```
 
-For a deployed static app, set `HOST_URL` in `.env`, then start or restart rooms normally:
+For a deployed static app, configure the host URL, then start or restart rooms normally:
 
 ```bash
+npx party-p2p configure set host https://robertinglin.github.io/party-p2p/
 npm run build
 npm run start -- rooftop-disco
 ```
@@ -55,7 +58,30 @@ npm run start -- rooftop-disco
 
 The start command reuses `host/data/<session-id>.json`, including the saved room secret and admin records.
 
-Real environment variables override `.env`, and CLI flags such as `--app-url` override both.
+Real environment variables override `~/.party-p2p/.partyrc`, and CLI flags such as `--app-url` override both.
+
+## Server CLI
+
+After the package is published, run a host from anywhere with:
+
+```bash
+npx party-p2p rooftop-disco
+```
+
+The npm CLI stores room files in `~/.party-p2p/<session-id>.json`. Starting the same session ID again reuses that file, including the saved room secret and admin records.
+
+The CLI reads `~/.party-p2p/.partyrc` before it starts the host, so this works without passing `--app-url` every time:
+
+```bash
+npx party-p2p configure set host https://robertinglin.github.io/party-p2p/
+```
+
+Useful CLI options:
+
+```bash
+npx party-p2p rooftop-disco --app-url https://robertinglin.github.io/party-p2p/
+npx party-p2p rooftop-disco --title "Rooftop Disco" --location "Brooklyn rooftop"
+```
 
 ## GitHub Pages deploy
 
@@ -64,6 +90,19 @@ The client deploys through GitHub Actions from `.github/workflows/deploy-client.
 ```text
 https://robertinglin.github.io/party-p2p/
 ```
+
+## npm publish
+
+The server CLI publishes through GitHub Actions from `.github/workflows/publish-npm.yml` using npm trusted publishing. In npm package settings, add a GitHub Actions trusted publisher:
+
+```text
+Owner: robertinglin
+Repository: party-p2p
+Workflow filename: publish-npm.yml
+Allowed action: npm publish
+```
+
+Pushes to `main` that touch server/package files bump a patch version, tag it, and publish to npm. You can also run the workflow manually and choose `patch`, `minor`, or `major`.
 
 ## Host commands
 
@@ -82,7 +121,7 @@ Useful flags:
 | Flag | Purpose |
 | --- | --- |
 | `--room` | Human room name; also becomes the deterministic room peer ID. |
-| `--app-url` | URL where the static PWA is hosted. Defaults to `HOST_URL` or `APP_URL` from `.env`, then `http://localhost:4273/`. Use `https://robertinglin.github.io/party-p2p/` for GitHub Pages. |
+| `--app-url` | URL where the static PWA is hosted. Defaults to `HOST_URL` or `APP_URL`, then `host` from `~/.party-p2p/.partyrc`, then `http://localhost:4273/`. Use `https://robertinglin.github.io/party-p2p/` for GitHub Pages. |
 | `--secret` | Override/generated room secret. If omitted, a random one is saved in `host/data/<room>.json`. |
 | `--ice` | Comma-separated ICE server URLs. Defaults to Google STUN for convenience. |
 

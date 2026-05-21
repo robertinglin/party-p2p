@@ -16,7 +16,7 @@ PeerJS Cloud is only used for signaling. The static app host only serves assets.
 
 The Node room peer keeps the deterministic room ID and reconnects to PeerJS Cloud if the signaling socket drops. That preserves the public-cloud setup path without requiring a host-run PeerServer.
 
-The room peer reads host defaults from the project `.env`; `HOST_URL` is the static app address used to generate invite links.
+The room peer reads host defaults from `~/.party-p2p/.partyrc`; `host` is the static app address used to generate invite links. Real `APP_URL` or `HOST_URL` environment variables override the rc file, and command-line flags override both. The npm CLI stores reusable room files beside that rc file in `~/.party-p2p/<session-id>.json`.
 
 ## Security model
 

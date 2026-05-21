@@ -1,0 +1,81 @@
+name: Publish Server CLI to npm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bin/**
+      - host/**
+      - scripts/**
+      - package.json
+      - package-lock.json
+      - .partyrc.example
+      - README.md
+      - ARCHITECTURE.md
+      - .github/workflows/publish-npm.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version bump
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test
+
+      - name: Check server files
+        run: |
+          node --check bin/party-p2p.cjs
+          node --check host/host.cjs
+          node --check host/partyRc.cjs
+          node --check host/nodePeer.cjs
+          node --check scripts/start-host.cjs
+
+      - name: Bump version
+        run: npm version "${{ github.event.inputs.version || 'patch' }}" --no-git-tag-version
+
+      - name: Read version
+        id: package
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: release party-p2p v${{ steps.package.outputs.version }} [skip ci]"
+          git tag "v${{ steps.package.outputs.version }}"
+          git push
+          git push origin "v${{ steps.package.outputs.version }}"
+
+      - name: Publish to npm
+        run: npm publish --access public

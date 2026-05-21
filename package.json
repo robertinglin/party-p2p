@@ -1,14 +1,31 @@
 {
   "name": "party-p2p",
   "version": "0.1.0",
-  "private": true,
   "description": "A statically hosted event PWA using PeerJS/WebRTC and a host-run room peer.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robertinglin/party-p2p.git"
+  },
+  "bin": {
+    "party-p2p": "./bin/party-p2p.cjs"
+  },
+  "files": [
+    "bin",
+    "host/*.cjs",
+    "scripts",
+    ".partyrc.example",
+    "ARCHITECTURE.md",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite --config client/vite.config.ts --host 0.0.0.0",
     "build": "tsc --project client/tsconfig.json && vite build --config client/vite.config.ts",
     "check": "tsc --project client/tsconfig.json",
-    "test": "npm run check",
+    "test": "npm run check && node --test tests/partyRc.test.cjs",
     "preview": "vite preview --config client/vite.config.ts --host 0.0.0.0",
     "start": "node scripts/start-host.cjs",
     "host": "node host/host.cjs",
@@ -17,19 +34,19 @@
   },
   "dependencies": {
     "@roamhq/wrtc": "^0.10.0",
-    "@vitejs/plugin-react": "^5.0.0",
     "peerjs": "^1.5.5",
-    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "vite": "^6.0.0",
     "ws": "^8.18.0",
     "xhr2": "^0.2.1"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^6.0.0",
     "typescript": "^5.6.3"
   },
   "engines": {

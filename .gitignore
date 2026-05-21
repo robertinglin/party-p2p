@@ -2,6 +2,8 @@ node_modules
 client/dist
 host/data
 .env
+.partyrc
 .DS_Store
 *.local
 *.log
+tests/.tmp-*
