@@ -25,7 +25,7 @@
     "dev": "vite --config client/vite.config.ts --host 0.0.0.0",
     "build": "tsc --project client/tsconfig.json && vite build --config client/vite.config.ts",
     "check": "tsc --project client/tsconfig.json",
-    "test": "npm run check && node --test tests/partyRc.test.cjs",
+    "test": "npm run check && node --test tests/partyRc.test.cjs tests/host-moderation.test.cjs tests/client-eventTime.test.cjs tests/client-manifest.test.cjs tests/client-roomLink.test.cjs tests/client-storage.test.cjs",
     "preview": "vite preview --config client/vite.config.ts --host 0.0.0.0",
     "start": "node scripts/start-host.cjs",
     "host": "node host/host.cjs",
@@ -40,14 +40,14 @@
     "xhr2": "^0.2.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.0.0",
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^5.0.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "vite": "^6.0.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
   },
   "engines": {
     "node": ">=20"

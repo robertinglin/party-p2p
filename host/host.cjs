@@ -209,15 +209,18 @@ function touchState(store) {
 function guestForProfile(store, profile, peerId, role) {
   const existing = store.state.guests[profile.id];
   const now = Date.now();
+  const nameLocked = Boolean(existing?.nameLocked);
   const guest = {
     id: profile.id,
     peerId,
-    name: String(profile.name || "Guest").slice(0, 80),
-    avatar: String(profile.avatar || "✨").slice(0, 8),
+    name: nameLocked ? existing.name : String(profile.name || "Guest").slice(0, 80),
+    avatar: nameLocked ? existing.avatar : String(profile.avatar || "✨").slice(0, 8),
     rsvp: existing?.rsvp || "unset",
     role,
     joinedAt: existing?.joinedAt || now,
-    lastSeenAt: now
+    lastSeenAt: now,
+    nameLocked,
+    chatDisabled: Boolean(existing?.chatDisabled)
   };
   store.state.guests[profile.id] = guest;
   return guest;
@@ -258,11 +261,16 @@ function requireString(value, max = 4000) {
   return String(value || "").slice(0, max);
 }
 
+function hasPayloadKey(payload, key) {
+  return Object.prototype.hasOwnProperty.call(payload, key);
+}
+
 function applyMutation(store, mutation, role) {
   const state = store.state;
   const guest = state.guests[mutation.clientId];
   const authorName = guest?.name || "Guest";
   const isAdminRole = role === "admin";
+  const payload = mutation.payload || {};
 
   if (store.seenMutations.includes(mutation.id)) return { changed: false };
   store.seenMutations.push(mutation.id);
@@ -272,23 +280,34 @@ function applyMutation(store, mutation, role) {
     case "guest.update": {
       const existing = state.guests[mutation.clientId];
       if (!existing) return { changed: false, error: "Unknown guest." };
-      const rsvp = mutation.payload.rsvp;
+      if (existing.nameLocked && (hasPayloadKey(payload, "name") || hasPayloadKey(payload, "avatar"))) {
+        return { changed: false, error: "This guest's name is locked by the host." };
+      }
+      const rsvp = payload.rsvp;
       if (["yes", "maybe", "no", "unset"].includes(rsvp)) existing.rsvp = rsvp;
-      if (mutation.payload.name) existing.name = requireString(mutation.payload.name, 80);
-      if (mutation.payload.avatar) existing.avatar = requireString(mutation.payload.avatar, 8);
+      if (payload.name) existing.name = requireString(payload.name, 80);
+      if (payload.avatar) existing.avatar = requireString(payload.avatar, 8);
       existing.lastSeenAt = Date.now();
+      break;
+    }
+    case "guest.moderate": {
+      if (!isAdminRole) return { changed: false, error: "Only admins can moderate guests." };
+      const target = state.guests[requireString(payload.guestId, 120)];
+      if (!target) return { changed: false, error: "Guest not found." };
+      if (hasPayloadKey(payload, "nameLocked")) target.nameLocked = Boolean(payload.nameLocked);
+      if (hasPayloadKey(payload, "chatDisabled")) target.chatDisabled = Boolean(payload.chatDisabled);
       break;
     }
     case "event.update": {
       if (!isAdminRole) return { changed: false, error: "Only admins can edit event details." };
       const allowed = ["title", "date", "time", "location", "description", "coverEmoji", "dressCode", "hostNote", "theme"];
       for (const key of allowed) {
-        if (Object.prototype.hasOwnProperty.call(mutation.payload, key)) {
-          state.details[key] = requireString(mutation.payload[key], key === "description" || key === "hostNote" ? 5000 : 300);
+        if (hasPayloadKey(payload, key)) {
+          state.details[key] = requireString(payload[key], key === "description" || key === "hostNote" ? 5000 : 300);
         }
       }
-      if (Object.prototype.hasOwnProperty.call(mutation.payload, "locationPin")) {
-        const locationPin = sanitizeLocationPin(mutation.payload.locationPin);
+      if (hasPayloadKey(payload, "locationPin")) {
+        const locationPin = sanitizeLocationPin(payload.locationPin);
         if (locationPin) state.details.locationPin = locationPin;
         else delete state.details.locationPin;
       }
@@ -296,13 +315,14 @@ function applyMutation(store, mutation, role) {
       break;
     }
     case "post.add": {
-      const body = requireString(mutation.payload.body, 4000).trim();
+      if (guest?.chatDisabled) return { changed: false, error: "Posting is disabled for this guest." };
+      const body = requireString(payload.body, 4000).trim();
       if (!body) return { changed: false, error: "Post body is empty." };
       state.posts.push({ id: crypto.randomUUID(), authorId: mutation.clientId, authorName, body, createdAt: Date.now() });
       break;
     }
     case "post.delete": {
-      const post = state.posts.find((item) => item.id === mutation.payload.id);
+      const post = state.posts.find((item) => item.id === payload.id);
       if (!post) return { changed: false, error: "Post not found." };
       if (!isAdminRole && post.authorId !== mutation.clientId) return { changed: false, error: "Only admins or the author can delete this post." };
       post.deleted = true;
@@ -310,19 +330,20 @@ function applyMutation(store, mutation, role) {
     }
     case "post.pin": {
       if (!isAdminRole) return { changed: false, error: "Only admins can pin posts." };
-      const post = state.posts.find((item) => item.id === mutation.payload.id);
+      const post = state.posts.find((item) => item.id === payload.id);
       if (!post) return { changed: false, error: "Post not found." };
-      post.pinned = Boolean(mutation.payload.pinned);
+      post.pinned = Boolean(payload.pinned);
       break;
     }
     case "comment.add": {
-      const body = requireString(mutation.payload.body, 1800).trim();
+      if (guest?.chatDisabled) return { changed: false, error: "Posting is disabled for this guest." };
+      const body = requireString(payload.body, 1800).trim();
       if (!body) return { changed: false, error: "Comment body is empty." };
       state.comments.push({ id: crypto.randomUUID(), authorId: mutation.clientId, authorName, body, createdAt: Date.now() });
       break;
     }
     case "comment.delete": {
-      const comment = state.comments.find((item) => item.id === mutation.payload.id);
+      const comment = state.comments.find((item) => item.id === payload.id);
       if (!comment) return { changed: false, error: "Comment not found." };
       if (!isAdminRole && comment.authorId !== mutation.clientId) return { changed: false, error: "Only admins or the author can delete this comment." };
       comment.deleted = true;
@@ -481,7 +502,15 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  applyMutation,
+  defaultState,
+  guestForProfile
+};

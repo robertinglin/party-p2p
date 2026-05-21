@@ -2,9 +2,13 @@
   "name": "Party P2P",
   "short_name": "PartyP2P",
   "description": "Peer-to-peer event invites over PeerJS/WebRTC.",
+  "id": ".",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
   "background_color": "#fff4e8",
   "theme_color": "#ff6aa2",
   "icons": [

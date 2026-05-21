@@ -14,6 +14,18 @@ export type RoomConfig = {
   iceServers?: RTCIceServer[];
 };
 
+export type SavedInvite = {
+  id: string;
+  config: RoomConfig;
+  openedAt?: number;
+  lastOpenedAt?: number;
+  acceptedAt?: number;
+  lastJoinedAt?: number;
+  profile?: Profile;
+  details?: EventDetails;
+  stateUpdatedAt?: number;
+};
+
 export type Guest = {
   id: string;
   peerId?: string;
@@ -23,6 +35,8 @@ export type Guest = {
   role: Role;
   joinedAt: number;
   lastSeenAt: number;
+  nameLocked?: boolean;
+  chatDisabled?: boolean;
 };
 
 export type EventDetails = {
@@ -83,6 +97,7 @@ export type Mutation = {
   ts: number;
   op:
     | "guest.update"
+    | "guest.moderate"
     | "event.update"
     | "post.add"
     | "post.delete"

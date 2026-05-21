@@ -1,12 +1,14 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { P2PRoomClient } from "./lib/peerRoom";
-import type { Comment, EventDetails, EventState, Guest, Post, Profile, Role, RoomConfig, Rsvp } from "./lib/types";
-import { randomAvatar, roomToPeerId, slugifyRoom } from "./lib/id";
+import type { Comment, EventDetails, EventState, Guest, Post, Profile, Role, RoomConfig, Rsvp, SavedInvite } from "./lib/types";
+import { roomToPeerId, slugifyRoom } from "./lib/id";
 import { buildRoomUrl, parseRoomConfig } from "./lib/roomLink";
-import { downloadBackup, loadEncryptedBackup, loadProfile, saveProfile } from "./lib/storage";
+import { downloadBackup, loadEncryptedBackup, loadProfile, loadSavedInvites, removeSavedInvite, saveAcceptedInvite, saveInviteSnapshot, saveOpenedInvite, saveProfile } from "./lib/storage";
 import { LocationMap, MapPinEditor } from "./components/OpenStreetMap";
 import { openStreetMapUrl } from "./lib/map";
+import { JoinInviteScreen, RootScreen } from "./components/JoinFlows";
+import { ProfileEditor } from "./components/ProfileTools";
 
 type Status = "idle" | "connecting" | "connected" | "offline" | "error";
 
@@ -29,36 +31,84 @@ function isAdmin(role: Role): boolean {
   return role === "admin";
 }
 
-function emptyConfigFromForm(): RoomConfig {
-  const roomName = "rooftop-disco";
+function normalizeRoomConfig(config: RoomConfig): RoomConfig {
+  const roomName = slugifyRoom(config.roomName);
   return {
+    ...config,
     roomName,
-    roomSecret: "paste-room-secret-from-host",
-    roomPeerId: roomToPeerId(roomName)
+    roomPeerId: config.roomPeerId || roomToPeerId(roomName)
   };
 }
 
+function sameRoomConfig(left: RoomConfig | undefined, right: RoomConfig | undefined): boolean {
+  return Boolean(
+    left &&
+      right &&
+      left.roomName === right.roomName &&
+      left.roomPeerId === right.roomPeerId &&
+      left.roomSecret === right.roomSecret
+  );
+}
+
+function savedInviteFor(invites: SavedInvite[], config: RoomConfig | undefined): SavedInvite | undefined {
+  if (!config) return undefined;
+  return invites.find(
+    (invite) =>
+      invite.config.roomName === config.roomName &&
+      invite.config.roomPeerId === config.roomPeerId &&
+      invite.config.roomSecret === config.roomSecret
+  );
+}
+
 export default function App() {
-  const [config, setConfig] = useState<RoomConfig | undefined>(() => parseRoomConfig());
-  const [profile, setProfile] = useState<Profile>(() => loadProfile());
+  const [routeConfig, setRouteConfig] = useState<RoomConfig | undefined>(() => parseRoomConfig());
+  const [activeConfig, setActiveConfig] = useState<RoomConfig | undefined>();
+  const [baseProfile, setBaseProfile] = useState<Profile>(() => loadProfile());
+  const [activeProfile, setActiveProfile] = useState<Profile>(() => baseProfile);
+  const [savedInvites, setSavedInvites] = useState<SavedInvite[]>(() => loadSavedInvites());
   const [state, setState] = useState<EventState | undefined>();
   const [role, setRole] = useState<Role>("guest");
-  const [status, setStatus] = useState<Status>(config ? "connecting" : "idle");
+  const [status, setStatus] = useState<Status>("idle");
   const [statusDetail, setStatusDetail] = useState<string>("");
   const [toast, setToast] = useState<string>("");
   const clientRef = useRef<P2PRoomClient | undefined>(undefined);
+  const config = activeConfig;
 
   useEffect(() => {
     function syncRoomConfigFromHash() {
-      setConfig(parseRoomConfig());
+      setRouteConfig(parseRoomConfig());
     }
 
     window.addEventListener("hashchange", syncRoomConfigFromHash);
-    return () => window.removeEventListener("hashchange", syncRoomConfigFromHash);
+    window.addEventListener("popstate", syncRoomConfigFromHash);
+    return () => {
+      window.removeEventListener("hashchange", syncRoomConfigFromHash);
+      window.removeEventListener("popstate", syncRoomConfigFromHash);
+    };
   }, []);
 
   useEffect(() => {
-    if (!config) {
+    if (!routeConfig) {
+      setActiveConfig(undefined);
+      return;
+    }
+
+    const normalized = normalizeRoomConfig(routeConfig);
+    const nextInvites = saveOpenedInvite(normalized);
+    const savedInvite = savedInviteFor(nextInvites, normalized);
+    setSavedInvites(nextInvites);
+
+    if (savedInvite?.acceptedAt && savedInvite.profile) {
+      setActiveProfile(savedInvite.profile);
+      setActiveConfig((current) => (sameRoomConfig(current, normalized) ? current : normalized));
+      return;
+    }
+
+    setActiveConfig((current) => (sameRoomConfig(current, normalized) ? current : undefined));
+  }, [routeConfig?.roomName, routeConfig?.roomPeerId, routeConfig?.roomSecret]);
+
+  useEffect(() => {
+    if (!activeConfig) {
       clientRef.current = undefined;
       setState(undefined);
       setRole("guest");
@@ -74,7 +124,7 @@ export default function App() {
     setStatusDetail("");
     setToast("");
 
-    const client = new P2PRoomClient(config, profile, {
+    const client = new P2PRoomClient(activeConfig, activeProfile, {
       onStatus: (next, detail) => {
         if (cancelled) return;
         setStatus(next);
@@ -83,6 +133,7 @@ export default function App() {
       onState: (nextState) => {
         if (cancelled) return;
         setState(nextState);
+        setSavedInvites(saveInviteSnapshot(activeConfig, activeProfile, nextState.details, nextState.updatedAt));
       },
       onRole: (nextRole) => {
         if (cancelled) return;
@@ -95,7 +146,7 @@ export default function App() {
     });
 
     clientRef.current = client;
-    void loadEncryptedBackup(config.roomName, config.roomSecret).then((backup) => {
+    void loadEncryptedBackup(activeConfig.roomName, activeConfig.roomSecret).then((backup) => {
       if (!cancelled && backup) setState(backup);
     });
     void client.start();
@@ -105,20 +156,75 @@ export default function App() {
       client.destroy();
       if (clientRef.current === client) clientRef.current = undefined;
     };
-  }, [config?.roomName, config?.roomPeerId, config?.roomSecret, profile.id]);
+  }, [activeConfig?.roomName, activeConfig?.roomPeerId, activeConfig?.roomSecret, activeProfile.id]);
 
   function send(op: Parameters<P2PRoomClient["sendMutation"]>[0], payload: Record<string, unknown>) {
     clientRef.current?.sendMutation(op, payload);
   }
 
-  function updateProfile(nextProfile: Profile) {
-    setProfile(nextProfile);
+  function updateBaseProfile(nextProfile: Profile) {
+    setBaseProfile(nextProfile);
     saveProfile(nextProfile);
+  }
+
+  function updateActiveProfile(nextProfile: Profile) {
+    if (state?.guests[nextProfile.id]?.nameLocked) {
+      setToast("Name locked by host.");
+      return;
+    }
+
+    setActiveProfile(nextProfile);
+    if (activeConfig) {
+      setSavedInvites(state ? saveInviteSnapshot(activeConfig, nextProfile, state.details, state.updatedAt) : saveAcceptedInvite(activeConfig, nextProfile));
+    }
     send("guest.update", { name: nextProfile.name, avatar: nextProfile.avatar });
   }
 
+  function openInvite(nextConfig: RoomConfig) {
+    const normalized = normalizeRoomConfig(nextConfig);
+    window.history.pushState(null, "", buildRoomUrl(normalized));
+    setRouteConfig(normalized);
+    setActiveConfig(undefined);
+    setState(undefined);
+  }
+
+  function acceptInvite(nextProfile: Profile) {
+    if (!routeConfig) return;
+    const normalized = normalizeRoomConfig(routeConfig);
+    setActiveProfile(nextProfile);
+    setSavedInvites(saveAcceptedInvite(normalized, nextProfile));
+    setActiveConfig(normalized);
+  }
+
+  function backToRoot() {
+    window.history.pushState(null, "", `${window.location.pathname}${window.location.search}`);
+    setRouteConfig(undefined);
+    setActiveConfig(undefined);
+    setState(undefined);
+  }
+
+  if (routeConfig && !activeConfig) {
+    return (
+      <JoinInviteScreen
+        baseProfile={baseProfile}
+        config={routeConfig}
+        onAccept={acceptInvite}
+        onBack={backToRoot}
+        savedInvite={savedInviteFor(savedInvites, normalizeRoomConfig(routeConfig))}
+      />
+    );
+  }
+
   if (!config) {
-    return <JoinScreen onJoin={setConfig} profile={profile} onProfile={updateProfile} />;
+    return (
+      <RootScreen
+        baseProfile={baseProfile}
+        onBaseProfile={updateBaseProfile}
+        onForgetInvite={(id) => setSavedInvites(removeSavedInvite(id))}
+        onOpenInvite={openInvite}
+        savedInvites={savedInvites}
+      />
+    );
   }
 
   return (
@@ -141,9 +247,9 @@ export default function App() {
         <EventView
           state={state}
           role={role}
-          profile={profile}
+          profile={activeProfile}
           config={config}
-          onProfile={updateProfile}
+          onProfile={updateActiveProfile}
           onMutation={send}
           onDownloadBackup={() => downloadBackup(config.roomName)}
         />
@@ -154,49 +260,6 @@ export default function App() {
           <p>Connecting to the host peer at <strong>{config.roomPeerId}</strong>.</p>
         </section>
       )}
-    </main>
-  );
-}
-
-function JoinScreen({ onJoin, profile, onProfile }: { onJoin: (config: RoomConfig) => void; profile: Profile; onProfile: (profile: Profile) => void }) {
-  const [form, setForm] = useState<RoomConfig>(() => emptyConfigFromForm());
-
-  function update<K extends keyof RoomConfig>(key: K, value: RoomConfig[K]) {
-    setForm((current) => {
-      const next = { ...current, [key]: value };
-      if (key === "roomName") next.roomPeerId = roomToPeerId(String(value));
-      return next;
-    });
-  }
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    onJoin({ ...form, roomName: slugifyRoom(form.roomName), roomPeerId: form.roomPeerId || roomToPeerId(form.roomName) });
-  }
-
-  return (
-    <main className="app theme-sunset">
-      <div className="orb orb-one" />
-      <div className="orb orb-two" />
-      <section className="join-shell glass">
-        <p className="brand-kicker">Decentralized-ish invites</p>
-        <h1>Peer-to-peer party pages.</h1>
-        <p className="lede">Join a host-run room. Event data travels through WebRTC data channels and the app keeps an encrypted offline backup on your device.</p>
-
-        <ProfileEditor profile={profile} onProfile={onProfile} compact />
-
-        <form onSubmit={submit} className="join-form">
-          <label>
-            Room name
-            <input value={form.roomName} onChange={(event) => update("roomName", event.target.value)} />
-          </label>
-          <label>
-            Room secret
-            <input value={form.roomSecret} onChange={(event) => update("roomSecret", event.target.value)} />
-          </label>
-          <button className="primary" type="submit">Join room</button>
-        </form>
-      </section>
     </main>
   );
 }
@@ -230,6 +293,9 @@ function EventView({
 }) {
   const counts = guestCounts(state.guests);
   const currentGuest = state.guests[profile.id];
+  const visibleProfile = currentGuest
+    ? { ...profile, name: currentGuest.name, avatar: currentGuest.avatar }
+    : profile;
 
   return (
     <div className="event-layout">
@@ -254,7 +320,12 @@ function EventView({
 
       <aside className="side-stack">
         <ShareCard config={config} />
-        <ProfileEditor profile={profile} onProfile={onProfile} />
+        <ProfileEditor
+          profile={visibleProfile}
+          onProfile={onProfile}
+          locked={Boolean(currentGuest?.nameLocked)}
+          statusText="Name locked by host."
+        />
         <BackupCard version={state.version} updatedAt={state.updatedAt} onDownloadBackup={onDownloadBackup} />
       </aside>
 
@@ -264,7 +335,7 @@ function EventView({
       </section>
 
       <aside className="side-stack guests-stack">
-        <GuestList guests={state.guests} adminIds={state.adminIds} />
+        <GuestList guests={state.guests} adminIds={state.adminIds} canModerate={isAdmin(role)} onMutation={onMutation} />
         <DetailsCard details={state.details} />
       </aside>
     </div>
@@ -280,7 +351,7 @@ function ShareCard({ config }: { config: RoomConfig }) {
   }, [shareUrl]);
 
   async function copy() {
-    await navigator.clipboard?.writeText(shareUrl);
+    await navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
   }
 
   return (
@@ -290,31 +361,9 @@ function ShareCard({ config }: { config: RoomConfig }) {
         <span>share link</span>
       </div>
       {qr ? <img className="qr" src={qr} alt="QR code for this room" /> : <div className="qr skeleton" />}
+      <input className="share-link" readOnly value={shareUrl} aria-label="Invite link" />
       <button className="secondary" onClick={copy}>Copy invite link</button>
       <p className="tiny">The room secret is in the URL hash, so it is not sent to the static web server.</p>
-    </section>
-  );
-}
-
-function ProfileEditor({ profile, onProfile, compact = false }: { profile: Profile; onProfile: (profile: Profile) => void; compact?: boolean }) {
-  const [name, setName] = useState(profile.name);
-  const [avatar, setAvatar] = useState(profile.avatar);
-
-  function save() {
-    onProfile({ ...profile, name: name.trim() || profile.name, avatar: avatar.trim() || randomAvatar() });
-  }
-
-  return (
-    <section className={compact ? "profile-card compact" : "mini-card glass profile-card"}>
-      <div className="section-heading">
-        <h3>Your vibe</h3>
-        {!compact ? <span>{profile.avatar}</span> : null}
-      </div>
-      <div className="profile-fields">
-        <input className="avatar-input" value={avatar} onChange={(event) => setAvatar(event.target.value)} maxLength={3} aria-label="Avatar emoji" />
-        <input value={name} onChange={(event) => setName(event.target.value)} aria-label="Display name" />
-        <button className="secondary" onClick={save}>Save</button>
-      </div>
     </section>
   );
 }
@@ -350,7 +399,17 @@ function DetailsCard({ details }: { details: EventDetails }) {
   );
 }
 
-function GuestList({ guests, adminIds }: { guests: Record<string, Guest>; adminIds: string[] }) {
+function GuestList({
+  guests,
+  adminIds,
+  canModerate,
+  onMutation
+}: {
+  guests: Record<string, Guest>;
+  adminIds: string[];
+  canModerate: boolean;
+  onMutation: (op: Parameters<P2PRoomClient["sendMutation"]>[0], payload: Record<string, unknown>) => void;
+}) {
   const sorted = Object.values(guests).sort((a, b) => {
     const order: Record<Rsvp, number> = { yes: 0, maybe: 1, unset: 2, no: 3 };
     return order[a.rsvp] - order[b.rsvp] || b.lastSeenAt - a.lastSeenAt;
@@ -366,10 +425,24 @@ function GuestList({ guests, adminIds }: { guests: Record<string, Guest>; adminI
         {sorted.map((guest) => (
           <div className="guest" key={guest.id}>
             <span className="avatar">{guest.avatar}</span>
-            <div>
-              <strong>{guest.name}</strong>
-              <small>{adminIds.includes(guest.id) ? "admin" : guest.rsvp}</small>
+            <div className="guest-body">
+              <strong className="scroll-text" title={guest.name}>{guest.name}</strong>
+              <div className="guest-meta">
+                <small>{adminIds.includes(guest.id) ? "admin" : guest.rsvp}</small>
+                {guest.nameLocked ? <small>name locked</small> : null}
+                {guest.chatDisabled ? <small>chat muted</small> : null}
+              </div>
             </div>
+            {canModerate ? (
+              <div className="moderation-actions">
+                <button type="button" onClick={() => onMutation("guest.moderate", { guestId: guest.id, nameLocked: !guest.nameLocked })}>
+                  {guest.nameLocked ? "Unlock name" : "Lock name"}
+                </button>
+                <button type="button" onClick={() => onMutation("guest.moderate", { guestId: guest.id, chatDisabled: !guest.chatDisabled })}>
+                  {guest.chatDisabled ? "Allow chat" : "Mute chat"}
+                </button>
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -379,11 +452,21 @@ function GuestList({ guests, adminIds }: { guests: Record<string, Guest>; adminI
 
 function AdminPanel({ details, onUpdate }: { details: EventDetails; onUpdate: (details: Partial<EventDetails>) => void }) {
   const [draft, setDraft] = useState(details);
+  const [saving, setSaving] = useState(false);
+  const saveTimerRef = useRef<number>();
 
   useEffect(() => setDraft(details), [details]);
+  useEffect(() => () => window.clearTimeout(saveTimerRef.current), []);
 
   function update<K extends keyof EventDetails>(key: K, value: EventDetails[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function publishChanges() {
+    onUpdate(draft);
+    setSaving(true);
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => setSaving(false), 900);
   }
 
   return (
@@ -417,7 +500,10 @@ function AdminPanel({ details, onUpdate }: { details: EventDetails; onUpdate: (d
         </label>
         <label className="wide">Host note<textarea value={draft.hostNote} onChange={(event) => update("hostNote", event.target.value)} /></label>
       </div>
-      <button className="primary" onClick={() => onUpdate(draft)}>Publish changes</button>
+      <button className={`primary ${saving ? "is-loading" : ""}`} disabled={saving} onClick={publishChanges}>
+        {saving ? <span className="button-spinner" aria-hidden="true" /> : null}
+        {saving ? "Saving" : "Publish changes"}
+      </button>
     </section>
   );
 }
@@ -435,16 +521,20 @@ function PostsPanel({
 }) {
   const [postBody, setPostBody] = useState("");
   const [commentBody, setCommentBody] = useState("");
+  const currentGuest = state.guests[profile.id];
+  const postingDisabled = Boolean(currentGuest?.chatDisabled);
   const visiblePosts = state.posts.filter((post) => !post.deleted).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.createdAt - a.createdAt);
   const visibleComments = state.comments.filter((comment) => !comment.deleted).sort((a, b) => b.createdAt - a.createdAt);
 
   function addPost() {
+    if (postingDisabled) return;
     if (!postBody.trim()) return;
     onMutation("post.add", { body: postBody.trim() });
     setPostBody("");
   }
 
   function addComment() {
+    if (postingDisabled) return;
     if (!commentBody.trim()) return;
     onMutation("comment.add", { body: commentBody.trim() });
     setCommentBody("");
@@ -456,9 +546,10 @@ function PostsPanel({
         <h3>Party wall</h3>
         <span>{visiblePosts.length} posts</span>
       </div>
+      {postingDisabled ? <p className="tiny moderation-note">Posting disabled by host.</p> : null}
       <div className="composer">
-        <textarea value={postBody} onChange={(event) => setPostBody(event.target.value)} placeholder="Post a plan, playlist idea, ride share, or question…" />
-        <button className="primary" onClick={addPost}>Post</button>
+        <textarea disabled={postingDisabled} value={postBody} onChange={(event) => setPostBody(event.target.value)} placeholder="Post a plan, playlist idea, ride share, or question…" />
+        <button className="primary" disabled={postingDisabled} onClick={addPost}>Post</button>
       </div>
       <div className="posts">
         {visiblePosts.map((post) => (
@@ -470,8 +561,8 @@ function PostsPanel({
         <span>{visibleComments.length}</span>
       </div>
       <div className="composer compact-composer">
-        <input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Drop a comment…" />
-        <button className="primary" onClick={addComment}>Send</button>
+        <input disabled={postingDisabled} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Drop a comment…" />
+        <button className="primary" disabled={postingDisabled} onClick={addComment}>Send</button>
       </div>
       <div className="comments">
         {visibleComments.map((comment) => (

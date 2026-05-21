@@ -1,8 +1,7 @@
 import type { RoomConfig } from "./types";
 import { roomToPeerId } from "./id";
 
-export function parseRoomConfig(): RoomConfig | undefined {
-  const hash = window.location.hash || "";
+export function parseRoomConfigFromHash(hash: string): RoomConfig | undefined {
   const queryIndex = hash.indexOf("?");
   if (queryIndex === -1) return undefined;
   const route = hash.slice(0, queryIndex);
@@ -16,6 +15,22 @@ export function parseRoomConfig(): RoomConfig | undefined {
     roomSecret: params.get("secret") || "",
     roomPeerId: params.get("roomPeerId") || roomToPeerId(roomName)
   };
+}
+
+export function parseRoomConfigFromUrl(
+  value: string,
+  base = typeof window === "undefined" ? "https://party-p2p.invalid/" : window.location.href
+): RoomConfig | undefined {
+  try {
+    const url = new URL(value, base);
+    return parseRoomConfigFromHash(url.hash);
+  } catch {
+    return value.startsWith("#/room/") ? parseRoomConfigFromHash(value) : undefined;
+  }
+}
+
+export function parseRoomConfig(): RoomConfig | undefined {
+  return parseRoomConfigFromHash(window.location.hash || "");
 }
 
 export function buildRoomUrl(config: RoomConfig, base = window.location.origin + window.location.pathname): string {

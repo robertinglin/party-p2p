@@ -20,7 +20,7 @@ This is a prototype scaffold, not a production security audit.
 - Room invite QR in the terminal and inside the PWA.
 - Secure room secret in the URL hash, so it is not sent to the static web server.
 - First joined guest becomes admin.
-- Admin can edit event details, pin an OpenStreetMap location, pin/delete posts, and delete comments.
+- Admin can edit event details, pin an OpenStreetMap location, lock guest nicknames, mute guest posting, pin/delete posts, and delete comments.
 - Guests can RSVP, post, comment, and export their encrypted offline backup.
 - PWA manifest and service worker for install/offline app shell.
 
@@ -154,6 +154,14 @@ Every state snapshot received by the PWA is encrypted with AES-GCM using a key d
 ## Static Hosting
 
 Service workers and some browser APIs require a secure context. `localhost` is treated as secure for development, but real mobile testing should use an HTTPS static host such as Cloudflare Pages, GitHub Pages, or another trusted static hosting service. Pass that URL to `npm run host -- --app-url ...` so QR codes and copied invite links point at the hosted app.
+
+For Chrome to open QR invite links in the installed PWA, install the PWA from the same URL that the host uses for invite links. For example, if users install `https://robert.inglin.github.io/party-p2p/`, configure the host with that exact origin/path:
+
+```bash
+npx party-p2p configure set host https://robert.inglin.github.io/party-p2p/
+```
+
+The manifest uses a relative app id, start URL, and scope so the same static build works from root domains and subpaths. Chrome can then treat `#/room/...` invite URLs as in-scope launches and navigate the existing installed app window when supported.
 
 ## NAT / WAN limitations
 
