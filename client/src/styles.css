@@ -62,6 +62,60 @@ button { cursor: pointer; }
 .topbar > div { min-width: 0; }
 .topbar h1 { font-size: clamp(1.25rem, 3vw, 2rem); margin: 2px 0 0; line-height: 1; overflow-wrap: anywhere; }
 .brand-kicker { text-transform: uppercase; letter-spacing: 0.12em; font-weight: 900; font-size: 0.72rem; color: rgba(36, 24, 37, 0.62); }
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  color: var(--ink);
+  vertical-align: top;
+}
+.brand-lockup.compact {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 10px 18px rgba(36, 24, 37, .16));
+}
+.brand-lockup.compact .brand-mark {
+  width: 34px;
+  height: 34px;
+}
+.brand-mark-base { fill: oklch(96% .038 77); }
+.brand-mark-link {
+  fill: none;
+  stroke: oklch(67% .19 20);
+  stroke-width: 3.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.brand-mark-node { fill: oklch(98% .018 82); stroke: var(--ink); stroke-width: 2.5; }
+.brand-mark-node.primary-node { fill: oklch(78% .18 85); }
+.brand-mark-node.secondary-node { fill: oklch(90% .055 84); }
+.brand-wordmark {
+  display: grid;
+  min-width: 0;
+  line-height: .92;
+  white-space: nowrap;
+}
+.brand-wordmark span {
+  color: rgba(36, 24, 37, .62);
+  font-size: .68rem;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.brand-wordmark strong {
+  color: var(--ink);
+  font-size: 1.18rem;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+.brand-lockup.compact .brand-wordmark span { font-size: .6rem; }
+.brand-lockup.compact .brand-wordmark strong { font-size: 1rem; }
 .connection-pill {
   display: flex;
   align-items: center;
@@ -458,6 +512,10 @@ label { display: grid; gap: 7px; font-weight: 850; color: rgba(36,24,37,.72); fo
   letter-spacing: 0;
   margin: 10px 0 16px;
   overflow-wrap: anywhere;
+}
+.root-hero .brand-lockup,
+.join-shell .brand-lockup {
+  margin-bottom: 18px;
 }
 .saved-invites { display: grid; gap: 12px; }
 .empty-invites {

@@ -1,5 +1,6 @@
 import type { Profile, RoomConfig, SavedInvite } from "../lib/types";
 import { partyTimingLabel } from "../lib/eventTime";
+import { BrandLockup } from "./Brand";
 import { JoinAsPanel, ProfileEditor } from "./ProfileTools";
 
 function inviteTitle(invite: SavedInvite): string {
@@ -57,7 +58,7 @@ export function RootScreen({
       <div className="orb orb-two" />
       <div className="root-layout">
         <section className="root-hero glass">
-          <p className="brand-kicker">Party P2P</p>
+          <BrandLockup />
           <h1>Your invites, ready to rejoin.</h1>
           <p className="lede">Room links stay on this device once opened so the root app can get you back into the right party without digging through messages.</p>
           <ProfileEditor profile={baseProfile} onProfile={onBaseProfile} compact title="Default name" />
@@ -104,6 +105,7 @@ export function JoinInviteScreen({
       <div className="orb orb-one" />
       <div className="orb orb-two" />
       <section className="join-shell glass">
+        <BrandLockup />
         <p className="brand-kicker">Invite found</p>
         <h1>Join {title}</h1>
         <p className="lede">{details ? partyTimingLabel(details) : "Choose how you want to show up before connecting to the host."}</p>

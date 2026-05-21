@@ -7,6 +7,7 @@ import { buildRoomUrl, parseRoomConfig } from "./lib/roomLink";
 import { downloadBackup, loadEncryptedBackup, loadProfile, loadSavedInvites, removeSavedInvite, saveAcceptedInvite, saveInviteSnapshot, saveOpenedInvite, saveProfile } from "./lib/storage";
 import { LocationMap, MapPinEditor } from "./components/OpenStreetMap";
 import { openStreetMapUrl } from "./lib/map";
+import { BrandLockup } from "./components/Brand";
 import { JoinInviteScreen, RootScreen } from "./components/JoinFlows";
 import { ProfileEditor } from "./components/ProfileTools";
 
@@ -233,7 +234,7 @@ export default function App() {
       <div className="orb orb-two" />
       <header className="topbar glass">
         <div>
-          <span className="brand-kicker">Party P2P</span>
+          <BrandLockup compact />
           <h1>{state?.details.title || config.roomName}</h1>
         </div>
         <ConnectionPill status={status} detail={statusDetail} role={role} />

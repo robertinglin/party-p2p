@@ -1,9 +1,9 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="512" height="512" rx="128" fill="url(#g)"/>
-  <circle cx="256" cy="246" r="138" fill="white" fill-opacity="0.72"/>
-  <path d="M162 282C188 338 266 354 319 314C365 279 372 209 333 169C286 121 201 140 174 201" stroke="#241825" stroke-width="31" stroke-linecap="round"/>
-  <circle cx="188" cy="184" r="26" fill="#241825"/>
-  <circle cx="326" cy="267" r="26" fill="#241825"/>
-  <path d="M215 264C240 287 284 287 309 264" stroke="#FF5F9E" stroke-width="24" stroke-linecap="round"/>
-  <defs><linearGradient id="g" x1="0" y1="0" x2="512" y2="512"><stop stop-color="#ff7ab5"/><stop offset="0.55" stop-color="#ffd15f"/><stop offset="1" stop-color="#84f0c4"/></linearGradient></defs>
+  <rect width="512" height="512" rx="132" fill="#FFF0D2"/>
+  <path d="M160 194L256 256L352 194M256 256L176 334M256 256L336 334" stroke="#FF536B" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="130" cy="174" r="45" fill="#F7B900" stroke="#241825" stroke-width="23"/>
+  <circle cx="382" cy="174" r="45" fill="#F7B900" stroke="#241825" stroke-width="23"/>
+  <circle cx="256" cy="256" r="50" fill="#FFF8EC" stroke="#241825" stroke-width="24"/>
+  <circle cx="156" cy="364" r="42" fill="#F9DFA6" stroke="#241825" stroke-width="22"/>
+  <circle cx="356" cy="364" r="42" fill="#F9DFA6" stroke="#241825" stroke-width="22"/>
 </svg>

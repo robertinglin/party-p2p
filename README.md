@@ -26,49 +26,49 @@ This is a prototype scaffold, not a production security audit.
 
 ## Quick start
 
-```bash
-npm install
-npm run dev
-npm run host:demo
-```
-
-Open the printed invite URL or scan the terminal QR code. Keep the host process running while guests are connected.
-
-Host URL defaults live in `~/.party-p2p/.partyrc`:
-
-```json
-{
-  "host": "https://robertinglin.github.io/party-p2p/"
-}
-```
-
-For a deployed static app, configure the host URL, then start or restart rooms normally:
+Pick a short slug for the party and run the host:
 
 ```bash
-npx party-p2p configure set host https://robertinglin.github.io/party-p2p/
-npm run build
-npm run start -- rooftop-disco
+npx party-p2p friday-rooftop
 ```
 
-Restart an existing room by session ID:
+Open the printed invite URL or scan the terminal QR code. Keep that terminal open while guests are connected.
+
+The npm CLI stores room files in `~/.party-p2p/<session-id>.json`. Starting the same session ID again reuses that file, including the saved room secret and admin records.
+
+Host URL defaults live in `~/.party-p2p/.partyrc`. Configure this once when your static client is deployed somewhere other than the built-in default:
 
 ```bash
-npm run start -- rooftop-disco
+npx party-p2p configure set host https://party-p2p.github.io/
+npx party-p2p friday-rooftop
 ```
-
-The start command reuses `host/data/<session-id>.json`, including the saved room secret and admin records.
 
 Real environment variables override `~/.party-p2p/.partyrc`, and CLI flags such as `--app-url` override both.
 
+## Run Local
+
+For local development, run the static client and the host in separate terminals:
+
+```bash
+npm install
+npm run dev
+```
+
+Then start a local room host pointed at Vite:
+
+```bash
+npm run start -- friday-rooftop --app-url http://localhost:4273/
+```
+
+The local start command reuses `host/data/<session-id>.json`, including the saved room secret and admin records.
+
 ## Server CLI
 
-After the package is published, run a host from anywhere with:
+Run a host from anywhere with:
 
 ```bash
 npx party-p2p rooftop-disco
 ```
-
-The npm CLI stores room files in `~/.party-p2p/<session-id>.json`. Starting the same session ID again reuses that file, including the saved room secret and admin records.
 
 The CLI reads `~/.party-p2p/.partyrc` before it starts the host, so this works without passing `--app-url` every time:
 
