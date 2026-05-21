@@ -1,6 +1,6 @@
 {
   "name": "party-p2p",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A statically hosted event PWA using PeerJS/WebRTC and a host-run room peer.",
   "type": "module",
   "repository": {
