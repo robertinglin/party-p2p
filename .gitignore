@@ -1,0 +1,7 @@
+node_modules
+client/dist
+host/data
+.env
+.DS_Store
+*.local
+*.log
