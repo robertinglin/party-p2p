@@ -37,7 +37,7 @@ Open the printed invite URL or scan the terminal QR code. Keep the host process 
 Host URL defaults live in `.env`:
 
 ```bash
-HOST_URL=https://party-p2p.github.io/
+HOST_URL=https://robertinglin.github.io/party-p2p/
 ```
 
 For a deployed static app, set `HOST_URL` in `.env`, then start or restart rooms normally:
@@ -62,7 +62,7 @@ Real environment variables override `.env`, and CLI flags such as `--app-url` ov
 The client deploys through GitHub Actions from `.github/workflows/deploy-client.yml`. In the GitHub repo settings, set Pages source to **GitHub Actions**. Pushes to `main` build the Vite client and publish `client/dist` to:
 
 ```text
-https://party-p2p.github.io/
+https://robertinglin.github.io/party-p2p/
 ```
 
 ## Host commands
@@ -74,7 +74,7 @@ npm run host -- \
   --date "2026-06-20" \
   --time "8:00 PM" \
   --location "Brooklyn rooftop" \
-  --app-url https://party-p2p.github.io/
+  --app-url https://robertinglin.github.io/party-p2p/
 ```
 
 Useful flags:
@@ -82,7 +82,7 @@ Useful flags:
 | Flag | Purpose |
 | --- | --- |
 | `--room` | Human room name; also becomes the deterministic room peer ID. |
-| `--app-url` | URL where the static PWA is hosted. Defaults to `HOST_URL` or `APP_URL` from `.env`, then `http://localhost:4273/`. Use `https://party-p2p.github.io/` for GitHub Pages. |
+| `--app-url` | URL where the static PWA is hosted. Defaults to `HOST_URL` or `APP_URL` from `.env`, then `http://localhost:4273/`. Use `https://robertinglin.github.io/party-p2p/` for GitHub Pages. |
 | `--secret` | Override/generated room secret. If omitted, a random one is saved in `host/data/<room>.json`. |
 | `--ice` | Comma-separated ICE server URLs. Defaults to Google STUN for convenience. |
 

@@ -5,7 +5,7 @@ const path = require("node:path");
 
 function usage() {
   console.log("Usage: npm run start -- SESSION-ID [host options]");
-  console.log("Example: npm run start -- rooftop-disco --app-url https://party-p2p.github.io/");
+  console.log("Example: npm run start -- rooftop-disco --app-url https://robertinglin.github.io/party-p2p/");
 }
 
 function main() {

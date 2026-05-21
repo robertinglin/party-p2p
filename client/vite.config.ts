@@ -12,6 +12,6 @@ export default defineConfig({
   },
   server: {
     port: 4273,
-    allowedHosts: ['party-p2p.github.io']
+    allowedHosts: ['robertinglin.github.io']
   }
 });
