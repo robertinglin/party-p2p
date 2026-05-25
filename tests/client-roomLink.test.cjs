@@ -49,3 +49,15 @@ test("parses room config from absolute invite URL", () => {
     }
   );
 });
+
+test("parses relay address from invite URL", () => {
+  assert.deepEqual(
+    parseRoomConfigFromUrl("https://example.com/#/room/backyard?roomPeerId=party-p2p-backyard&relayAddress=peerjs%3Aparty-p2p-relay-123-relay&secret=secret-value"),
+    {
+      roomName: "backyard",
+      roomPeerId: "party-p2p-backyard",
+      roomSecret: "secret-value",
+      relayAddress: "peerjs:party-p2p-relay-123-relay"
+    }
+  );
+});

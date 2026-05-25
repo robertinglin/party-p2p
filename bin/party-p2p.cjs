@@ -2,7 +2,9 @@
 
 const { spawn } = require("node:child_process");
 const path = require("node:path");
+const WebSocket = require("ws");
 const { applyPartyRcDefaults, readPartyRc, userDataDir, userPartyRcFile, writePartyRc } = require("../host/partyRc.cjs");
+const { DEFAULT_RELAY_IPC_HOST, DEFAULT_RELAY_IPC_PORT } = require("../host/relayConfig.cjs");
 
 function dataDir() {
   return process.env.PARTY_P2P_DATA_DIR || userDataDir();
@@ -18,10 +20,82 @@ function defaultAppUrl() {
 
 function usage() {
   console.log("Usage: npx party-p2p SESSION-ID [host options]");
+  console.log("       npx party-p2p relay [relay options]");
+  console.log("       npx party-p2p relay add peerjs:relay-id-relay [--ipc-port 42777]");
   console.log("       npx party-p2p configure set host https://example.com");
   console.log("Example: npx party-p2p rooftop-disco --app-url https://robertinglin.github.io/party-p2p/");
+  console.log("Example: npx party-p2p relay --port 42777 --relay-peer peerjs:party-p2p-relay-other-relay");
   console.log(`Config: ${userPartyRcFile()}`);
   console.log(`Data: ${dataDir()}\\SESSION-ID.json`);
+}
+
+function parseRelayAddArgs(args) {
+  const parsed = {
+    ipcHost: process.env.PARTY_P2P_RELAY_IPC_HOST || DEFAULT_RELAY_IPC_HOST,
+    ipcPort: Number(process.env.PARTY_P2P_RELAY_IPC_PORT || DEFAULT_RELAY_IPC_PORT),
+    relayAddress: ""
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--host" || token === "--ipc-host") {
+      parsed.ipcHost = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (token === "--port" || token === "--ipc-port") {
+      parsed.ipcPort = Number(args[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (!token.startsWith("--") && !parsed.relayAddress) parsed.relayAddress = token;
+  }
+
+  return parsed;
+}
+
+function addRelay(args) {
+  const parsed = parseRelayAddArgs(args);
+  if (!parsed.relayAddress) {
+    usage();
+    process.exit(1);
+  }
+
+  console.log(`Connecting to relay IPC ws://${parsed.ipcHost}:${parsed.ipcPort}`);
+  const socket = new WebSocket(`ws://${parsed.ipcHost}:${parsed.ipcPort}`);
+  const requestId = `relay_add_${Date.now()}`;
+  const timer = setTimeout(() => {
+    console.error(`Timed out adding relay ${parsed.relayAddress}`);
+    socket.close();
+    process.exit(1);
+  }, 10000);
+  socket.on("open", () => {
+    console.log(`Adding relay ${parsed.relayAddress}`);
+    socket.send(JSON.stringify({
+      type: "relay.add",
+      requestId,
+      relayAddress: parsed.relayAddress
+    }));
+  });
+  socket.on("message", (data) => {
+    const message = JSON.parse(data.toString("utf8"));
+    if (message.requestId !== requestId) return;
+    if (message.type === "relay.add.ok") {
+      clearTimeout(timer);
+      console.log(`Added relay ${message.relayAddress}`);
+      socket.close();
+      return;
+    }
+    clearTimeout(timer);
+    console.error(message.message || "Failed to add relay");
+    socket.close();
+    process.exitCode = 1;
+  });
+  socket.on("error", (error) => {
+    clearTimeout(timer);
+    console.error(`Failed to connect to relay IPC ws://${parsed.ipcHost}:${parsed.ipcPort}: ${error.message}`);
+    process.exit(1);
+  });
 }
 
 function configure(args) {
@@ -54,6 +128,25 @@ function main() {
   const args = process.argv.slice(2);
   if (args[0] === "configure") {
     configure(args.slice(1));
+    return;
+  }
+  if (args[0] === "relay") {
+    if (args[1] === "add") {
+      addRelay(args.slice(2));
+      return;
+    }
+    const relayPath = path.join(__dirname, "..", "host", "relay.cjs");
+    const child = spawn(process.execPath, [relayPath, ...args.slice(1)], {
+      stdio: "inherit"
+    });
+
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        return;
+      }
+      process.exit(code ?? 0);
+    });
     return;
   }
 

@@ -11,6 +11,7 @@ export type RoomConfig = {
   roomPeerId: string;
   roomName: string;
   roomSecret: string;
+  relayAddress?: string;
   iceServers?: RTCIceServer[];
 };
 
@@ -147,6 +148,7 @@ export type HostError = {
   protocol: 1;
   code: string;
   message: string;
+  mutationId?: string;
 };
 
 export type WireMessage = ClientHello | ClientMutation | HostWelcome | HostState | HostError;

@@ -131,6 +131,39 @@ test("locked guests cannot change identity but can still RSVP", () => {
   assert.equal(store.state.guests.guest.rsvp, "yes");
 });
 
+test("admin location pin updates are sanitized without dropping the mutation", () => {
+  const store = makeStore();
+
+  const result = applyMutation(
+    store,
+    mutation("admin", "event.update", {
+      locationPin: {
+        lat: "91",
+        lng: "190",
+        zoom: "22"
+      }
+    }),
+    "admin"
+  );
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(store.state.details.locationPin, {
+    lat: 85.05112878,
+    lng: -170,
+    zoom: 18
+  });
+});
+
+test("invalid location pin clears the stored pin", () => {
+  const store = makeStore();
+  store.state.details.locationPin = { lat: 40, lng: -73, zoom: 12 };
+
+  const result = applyMutation(store, mutation("admin", "event.update", { locationPin: { lat: "nope", lng: -73 } }), "admin");
+
+  assert.equal(result.changed, true);
+  assert.equal(store.state.details.locationPin, undefined);
+});
+
 test("locked guest identity survives reconnect profiles", () => {
   const store = makeStore();
   store.state.guests.guest.nameLocked = true;

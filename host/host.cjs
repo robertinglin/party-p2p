@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 /*
-  Host-run PeerJS room service.
+  Host-run room state service.
 
-  This process creates a Node PeerJS room peer through PeerJS Cloud. Browser
-  clients load the static PWA from APP_URL and connect to this peer over WebRTC
-  data channels; event data is not stored on a third-party server.
+  The local party-p2p relay owns the PeerJS room peer. Browser clients connect
+  to that relay peer; this host process connects to the relay over loopback IPC
+  and receives room protocol messages routed by the relay.
 */
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const qrcode = require("qrcode-terminal");
+const WebSocket = require("ws");
 const { applyPartyRcDefaults } = require("./partyRc.cjs");
-const { createNodePeer } = require("./nodePeer.cjs");
+const { ensureLocalRelay, relayIpcUrl } = require("./localRelayClient.cjs");
 
 const DEFAULT_DATA_DIR = path.join(__dirname, "data");
 const PROTOCOL = 1;
-const DEFAULT_APP_URL = "http://localhost:4273/";
+const DEFAULT_APP_URL = "http://localhost:42729/";
 const DEFAULT_LOCATION_PIN = { lat: 40.6782, lng: -73.9442, zoom: 13 };
 
 function parseArgs(argv) {
@@ -31,7 +32,8 @@ function parseArgs(argv) {
     roomSecret: process.env.ROOM_SECRET || "",
     dataDir: process.env.PARTY_P2P_DATA_DIR || DEFAULT_DATA_DIR,
     theme: process.env.THEME || "sunset",
-    iceServers: process.env.ICE_SERVERS || "stun:stun.l.google.com:19302"
+    iceServers: process.env.ICE_SERVERS || "stun:stun.l.google.com:19302",
+    relayPeers: parseRelayPeers(process.env.PARTY_P2P_RELAY_PEERS)
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -51,6 +53,7 @@ function parseArgs(argv) {
       case "secret": args.roomSecret = value; index += 1; break;
       case "data-dir": args.dataDir = value; index += 1; break;
       case "ice": args.iceServers = value; index += 1; break;
+      case "relay-peer": args.relayPeers.push(value); index += 1; break;
       default:
         console.warn(`Unknown option: ${token}`);
     }
@@ -83,13 +86,21 @@ function roomToPeerId(roomName) {
   return `party-p2p-${slugifyRoom(roomName)}`;
 }
 
+function parseRelayPeers(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function normalizeAppUrl(value) {
   return String(value || DEFAULT_APP_URL).trim().replace(/#.*$/, "");
 }
 
-function buildInviteUrl(appUrl, roomName, roomPeerId, roomSecret) {
+function buildInviteUrl(appUrl, roomName, roomPeerId, roomSecret, relayAddress) {
   const params = new URLSearchParams();
   params.set("roomPeerId", roomPeerId);
+  if (relayAddress) params.set("relayAddress", relayAddress);
   params.set("secret", roomSecret);
   return `${normalizeAppUrl(appUrl)}#/room/${encodeURIComponent(roomName)}?${params.toString()}`;
 }
@@ -104,14 +115,6 @@ function sha256Hex(value) {
 
 function secretProof(secret, roomName, clientId) {
   return sha256Hex(`${secret}:${roomName}:${clientId}`);
-}
-
-function parseIceServers(value) {
-  return String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((urls) => ({ urls }));
 }
 
 function clampNumber(value, min, max) {
@@ -243,20 +246,6 @@ function createAdminGrant(store, clientId) {
   return token;
 }
 
-function send(conn, message) {
-  try {
-    if (conn.open) conn.send(message);
-  } catch (error) {
-    console.error("Failed to send message", error);
-  }
-}
-
-function broadcast(connections, state, acceptedMutationId) {
-  for (const conn of connections.values()) {
-    send(conn, { type: "host/state", protocol: PROTOCOL, state, acceptedMutationId });
-  }
-}
-
 function requireString(value, max = 4000) {
   return String(value || "").slice(0, max);
 }
@@ -361,144 +350,171 @@ async function main() {
   applyPartyRcDefaults();
   const args = parseArgs(process.argv.slice(2));
   const store = loadStore(args);
-  const roomPeerId = store.roomPeerId || roomToPeerId(args.room);
   const appUrl = normalizeAppUrl(args.appUrl);
-  const shareUrl = buildInviteUrl(appUrl, store.roomName, roomPeerId, store.roomSecret);
-  const iceServers = parseIceServers(args.iceServers);
+  const localRelay = await ensureLocalRelay({
+    relayPeers: args.relayPeers,
+    iceServers: args.iceServers
+  });
+  const roomPeerId = localRelay.info.relayPeerId || localRelay.config.relayPeerId;
+  store.roomPeerId = roomPeerId;
+  store.relayAddress = localRelay.info.relayAddress || localRelay.config.relayAddress;
+  saveStore(store);
 
-  const peer = await createNodePeer(roomPeerId, iceServers);
-
-  const connections = new Map();
+  const shareUrl = buildInviteUrl(appUrl, store.roomName, roomPeerId, store.roomSecret, store.relayAddress);
   const connectionRoles = new Map();
+  const closedPeerIds = new Set();
   let announced = false;
-  let reconnectTimer;
 
-  function scheduleReconnect() {
-    if (reconnectTimer || peer.destroyed) return;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = undefined;
-      if (peer.destroyed || !peer.disconnected) return;
-      console.warn("Reconnecting to PeerJS Cloud...");
-      try {
-        peer.reconnect();
-      } catch (error) {
-        console.error("PeerJS Cloud reconnect failed:", error);
-        scheduleReconnect();
-      }
-    }, 1500);
+  function sendToRelay(socket, message) {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(message));
   }
 
-  peer.on("open", (id) => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = undefined;
-    }
+  function sendToClient(socket, peerId, message) {
+    sendToRelay(socket, {
+      type: "host.send",
+      peerId,
+      message
+    });
+  }
 
-    if (announced) {
-      console.log(`Reconnected to PeerJS Cloud as ${id}.`);
-      return;
-    }
+  function closeClient(socket, peerId) {
+    sendToRelay(socket, {
+      type: "host.close",
+      peerId
+    });
+  }
 
+  function broadcastState(socket, acceptedMutationId) {
+    sendToRelay(socket, {
+      type: "host.broadcast",
+      roomName: store.roomName,
+      message: {
+        type: "host/state",
+        protocol: PROTOCOL,
+        state: store.state,
+        acceptedMutationId
+      }
+    });
+  }
+
+  function announceRegisteredRelay() {
+    if (announced) return;
     announced = true;
-    console.log("\nParty P2P host is live.");
+    console.log("\nParty P2P host is live through the local relay.");
     console.log(`Room:        ${store.roomName}`);
-    console.log(`Room peer:   ${id}`);
+    console.log(`Room peer:   ${roomPeerId}`);
+    console.log(`Relay mesh:  ${store.relayAddress}`);
+    console.log(`Relay IPC:   ws://${localRelay.config.ipcHost}:${localRelay.config.ipcPort}${localRelay.spawned ? " (started)" : " (existing)"}`);
     console.log("Signaling:   PeerJS Cloud");
     console.log(`App URL:     ${appUrl}`);
     console.log(`Data file:   ${stateFile(store.dataDir, store.roomName)}`);
     console.log(`Invite URL:  ${shareUrl}\n`);
     qrcode.generate(shareUrl, { small: true });
     console.log("\nKeep this process running while guests are connected. Press Ctrl+C to stop.\n");
-  });
+  }
 
-  peer.on("disconnected", (id) => {
-    console.warn(`PeerJS Cloud signaling disconnected for ${id}. Existing data channels may stay open.`);
-    scheduleReconnect();
-  });
-
-  peer.on("connection", (conn) => {
-    console.log("WebRTC data connection from", conn.peer);
-    connections.set(conn.peer, conn);
-
-    conn.on("data", (message) => {
-      if (!message || typeof message !== "object") return;
-
-      if (message.type === "client/hello") {
-        if (message.protocol !== PROTOCOL || message.roomName !== store.roomName) {
-          send(conn, { type: "host/error", protocol: PROTOCOL, code: "room-mismatch", message: "Wrong room or protocol." });
-          conn.close();
-          return;
-        }
-        const expected = secretProof(store.roomSecret, store.roomName, message.clientId);
-        if (message.secretProof !== expected) {
-          send(conn, { type: "host/error", protocol: PROTOCOL, code: "bad-secret", message: "Room secret proof did not match." });
-          conn.close();
-          return;
-        }
-
-        let role = isAdmin(store, message.clientId, message.adminToken) ? "admin" : "guest";
-        let newAdminToken;
-        if (Object.keys(store.admins).length === 0) {
-          newAdminToken = createAdminGrant(store, message.clientId);
-          role = "admin";
-          console.log(`Granted first-join admin to ${message.profile?.name || message.clientId}`);
-        }
-
-        guestForProfile(store, message.profile || { id: message.clientId, name: "Guest", avatar: "✨" }, conn.peer, role);
-        touchState(store);
-        connectionRoles.set(conn.peer, { clientId: message.clientId, role });
-        send(conn, { type: "host/welcome", protocol: PROTOCOL, state: store.state, role, clientId: message.clientId, adminToken: newAdminToken });
-        broadcast(connections, store.state);
+  function handleClientMessage(socket, peerId, message) {
+    if (!message || typeof message !== "object") return;
+    if (message.type === "client/hello") {
+      closedPeerIds.delete(peerId);
+      if (message.protocol !== PROTOCOL || message.roomName !== store.roomName) {
+        sendToClient(socket, peerId, { type: "host/error", protocol: PROTOCOL, code: "room-mismatch", message: "Wrong room or protocol." });
+        closeClient(socket, peerId);
+        return;
+      }
+      const expected = secretProof(store.roomSecret, store.roomName, message.clientId);
+      if (message.secretProof !== expected) {
+        sendToClient(socket, peerId, { type: "host/error", protocol: PROTOCOL, code: "bad-secret", message: "Room secret proof did not match." });
+        closeClient(socket, peerId);
         return;
       }
 
-      if (message.type === "client/mutation") {
-        if (message.protocol !== PROTOCOL || message.roomName !== store.roomName) {
-          send(conn, { type: "host/error", protocol: PROTOCOL, code: "room-mismatch", message: "Wrong room or protocol." });
-          return;
-        }
-        const mutation = message.mutation;
-        if (!mutation || mutation.clientId !== connectionRoles.get(conn.peer)?.clientId) {
-          send(conn, { type: "host/error", protocol: PROTOCOL, code: "bad-mutation", message: "Mutation client did not match the connection." });
-          return;
-        }
-        const role = isAdmin(store, mutation.clientId, message.adminToken) ? "admin" : "guest";
-        const result = applyMutation(store, mutation, role);
-        if (result.error) {
-          send(conn, { type: "host/error", protocol: PROTOCOL, code: "mutation-rejected", message: result.error });
-          return;
-        }
-        if (result.changed) broadcast(connections, store.state, mutation.id);
+      let role = isAdmin(store, message.clientId, message.adminToken) ? "admin" : "guest";
+      let newAdminToken;
+      if (Object.keys(store.admins).length === 0) {
+        newAdminToken = createAdminGrant(store, message.clientId);
+        role = "admin";
+        console.log(`Granted first-join admin to ${message.profile?.name || message.clientId}`);
       }
-    });
 
-    conn.on("close", () => {
-      console.log("WebRTC data connection closed", conn.peer);
-      connections.delete(conn.peer);
-      connectionRoles.delete(conn.peer);
-    });
-
-    conn.on("error", (error) => {
-      if (error && error.type === "negotiation-failed") {
-        console.warn(`WebRTC data connection negotiation failed for ${conn.peer}: ${error.message || error}`);
-      } else {
-        console.error("WebRTC data connection error", conn.peer, error);
-      }
-      connections.delete(conn.peer);
-      connectionRoles.delete(conn.peer);
-    });
-  });
-
-  peer.on("error", (error) => {
-    if (error && error.type === "network") {
-      console.warn(`PeerJS Cloud signaling error: ${error.message || error}`);
+      guestForProfile(store, message.profile || { id: message.clientId, name: "Guest", avatar: "✨" }, peerId, role);
+      touchState(store);
+      connectionRoles.set(peerId, { clientId: message.clientId, role });
+      sendToClient(socket, peerId, { type: "host/welcome", protocol: PROTOCOL, state: store.state, role, clientId: message.clientId, adminToken: newAdminToken });
+      broadcastState(socket);
       return;
     }
 
-    console.error("Room peer error:", error);
-    if (error && error.type === "unavailable-id") {
-      console.error(`The room peer id '${roomPeerId}' is already in use on PeerJS Cloud. Stop the other host or pick a different room name.`);
+    if (message.type === "client/mutation") {
+      if (message.protocol !== PROTOCOL || message.roomName !== store.roomName) {
+        sendToClient(socket, peerId, { type: "host/error", protocol: PROTOCOL, code: "room-mismatch", message: "Wrong room or protocol." });
+        return;
+      }
+      const mutation = message.mutation;
+      if (!mutation || mutation.clientId !== connectionRoles.get(peerId)?.clientId) {
+        sendToClient(socket, peerId, { type: "host/error", protocol: PROTOCOL, code: "bad-mutation", message: "Mutation client did not match the connection." });
+        return;
+      }
+      const role = isAdmin(store, mutation.clientId, message.adminToken) ? "admin" : "guest";
+      const result = applyMutation(store, mutation, role);
+      if (result.error) {
+        sendToClient(socket, peerId, { type: "host/error", protocol: PROTOCOL, code: "mutation-rejected", message: result.error, mutationId: mutation.id });
+        return;
+      }
+      if (result.changed) broadcastState(socket, mutation.id);
+      else {
+        sendToClient(socket, peerId, {
+          type: "host/state",
+          protocol: PROTOCOL,
+          state: store.state,
+          acceptedMutationId: mutation.id
+        });
+      }
     }
+  }
+
+  const relaySocket = new WebSocket(relayIpcUrl(localRelay.config));
+
+  relaySocket.on("open", () => {
+    sendToRelay(relaySocket, {
+      type: "host.register",
+      roomName: store.roomName,
+      relayHints: [store.relayAddress, ...args.relayPeers].filter(Boolean)
+    });
+  });
+
+  relaySocket.on("message", (data) => {
+    let message;
+    try {
+      message = JSON.parse(data.toString("utf8"));
+    } catch {
+      return;
+    }
+
+    if (message.type === "host.register.ok") {
+      announceRegisteredRelay();
+      return;
+    }
+
+    if (message.type === "relay/client-message") {
+      handleClientMessage(relaySocket, message.peerId, message.message);
+      return;
+    }
+
+    if (message.type === "relay/client-close") {
+      if (!closedPeerIds.has(message.peerId)) console.log("Relay client connection closed", message.peerId);
+      closedPeerIds.add(message.peerId);
+      connectionRoles.delete(message.peerId);
+    }
+  });
+
+  relaySocket.on("close", () => {
+    console.error("Local relay IPC closed. Stop this host or restart it after the relay is available.");
+  });
+
+  relaySocket.on("error", (error) => {
+    console.error("Local relay IPC error:", error);
   });
 }
 

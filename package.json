@@ -1,7 +1,7 @@
 {
   "name": "party-p2p",
   "version": "0.1.3",
-  "description": "A statically hosted event PWA using PeerJS/WebRTC and a host-run room peer.",
+  "description": "A statically hosted event PWA using PeerJS/WebRTC and relay-owned rooms.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -10,9 +10,19 @@
   "bin": {
     "party-p2p": "./bin/party-p2p.cjs"
   },
+  "exports": {
+    "./relay": {
+      "import": "./relay.js",
+      "require": "./host/relay.cjs"
+    },
+    "./host/*.cjs": "./host/*.cjs",
+    "./bin/party-p2p.cjs": "./bin/party-p2p.cjs",
+    "./package.json": "./package.json"
+  },
   "files": [
     "bin",
     "host/*.cjs",
+    "relay.js",
     "scripts",
     ".partyrc.example",
     "ARCHITECTURE.md",
@@ -25,15 +35,20 @@
     "dev": "vite --config client/vite.config.ts --host 0.0.0.0",
     "build": "tsc --project client/tsconfig.json && vite build --config client/vite.config.ts",
     "check": "tsc --project client/tsconfig.json",
-    "test": "npm run check && node --test tests/partyRc.test.cjs tests/host-moderation.test.cjs tests/client-eventTime.test.cjs tests/client-manifest.test.cjs tests/client-roomLink.test.cjs tests/client-storage.test.cjs",
+    "test": "npm run check && node --test tests/partyRc.test.cjs tests/host-moderation.test.cjs tests/party-event.test.cjs tests/relay-protocol.test.cjs tests/client-eventTime.test.cjs tests/client-manifest.test.cjs tests/client-roomLink.test.cjs tests/client-relays.test.cjs tests/client-room-healing.test.cjs tests/client-storage.test.cjs",
     "preview": "vite preview --config client/vite.config.ts --host 0.0.0.0",
+    "local": "node scripts/local.cjs",
+    "peerjs:e2e": "node scripts/peerjs-cycle.cjs",
+    "playwright:e2e": "node scripts/playwright-cycle.cjs",
     "start": "node scripts/start-host.cjs",
     "host": "node host/host.cjs",
+    "relay": "node host/relay.cjs",
     "host:demo": "node host/host.cjs --room rooftop-disco --title \"Rooftop Disco\" --date \"2026-06-20\" --time \"8:00 PM\" --location \"Brooklyn rooftop\"",
     "clean": "rm -rf client/dist host/data"
   },
   "dependencies": {
     "@roamhq/wrtc": "^0.10.0",
+    "nostr-tools": "^2.23.5",
     "peerjs": "^1.5.5",
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0",
@@ -43,6 +58,8 @@
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^5.0.0",
+    "peer": "^1.0.2",
+    "playwright": "^1.60.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -50,6 +67,6 @@
     "vite": "^6.0.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   }
 }

@@ -47,7 +47,8 @@ function sameRoomConfig(left: RoomConfig | undefined, right: RoomConfig | undefi
       right &&
       left.roomName === right.roomName &&
       left.roomPeerId === right.roomPeerId &&
-      left.roomSecret === right.roomSecret
+      left.roomSecret === right.roomSecret &&
+      left.relayAddress === right.relayAddress
   );
 }
 
@@ -106,7 +107,7 @@ export default function App() {
     }
 
     setActiveConfig((current) => (sameRoomConfig(current, normalized) ? current : undefined));
-  }, [routeConfig?.roomName, routeConfig?.roomPeerId, routeConfig?.roomSecret]);
+  }, [routeConfig?.roomName, routeConfig?.roomPeerId, routeConfig?.roomSecret, routeConfig?.relayAddress]);
 
   useEffect(() => {
     if (!activeConfig) {
@@ -561,10 +562,13 @@ function PostsPanel({
         <h3>Comments</h3>
         <span>{visibleComments.length}</span>
       </div>
-      <div className="composer compact-composer">
-        <input disabled={postingDisabled} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Drop a comment…" />
-        <button className="primary" disabled={postingDisabled} onClick={addComment}>Send</button>
-      </div>
+      <form className="composer compact-composer" onSubmit={(event) => {
+        event.preventDefault();
+        addComment();
+      }}>
+        <input data-testid="comment-input" disabled={postingDisabled} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Drop a comment…" />
+        <button data-testid="comment-send" className="primary" disabled={postingDisabled} type="submit">Send</button>
+      </form>
       <div className="comments">
         {visibleComments.map((comment) => (
           <CommentRow key={comment.id} comment={comment} canDelete={isAdmin(role) || comment.authorId === profile.id} onDelete={() => onMutation("comment.delete", { id: comment.id })} />

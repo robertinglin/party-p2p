@@ -12,7 +12,7 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true
   },
   server: {
-    port: 4273,
+    port: 42729,
     allowedHosts: ["robertinglin.github.io"]
   }
 }));

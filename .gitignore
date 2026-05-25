@@ -3,6 +3,7 @@ client/dist
 host/data
 .env
 .partyrc
+.permjs
 .DS_Store
 *.local
 *.log

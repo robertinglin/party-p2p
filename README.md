@@ -1,12 +1,8 @@
 # Party P2P
 
-A Partiful-inspired event invite PWA that keeps event data off a central application server. The PWA is a static site that can be hosted on Cloudflare Pages, GitHub Pages, Vite preview, or any other static host. A host machine separately runs:
+A Partiful-inspired event invite PWA that keeps event data off a central application server. The PWA is a static site that can be hosted on Cloudflare Pages, GitHub Pages, Vite preview, or any other static host. A host machine runs local room state and a party relay process.
 
-1. A Node room peer powered by `peerjs` with Node WebRTC shims.
-
-PeerJS Cloud is used for signaling. Event data still travels over WebRTC data channels between guests and the host-run room peer.
-
-Guests open a QR/link, connect to the room peer over PeerJS/WebRTC data channels, and receive a live replicated event state. The first browser client that successfully joins a fresh room becomes the room admin.
+PeerJS Cloud is used for signaling. Guests open a QR/link, connect to the relay room peer over PeerJS/WebRTC data channels, and the relay routes room messages to the local host process over loopback IPC. The first browser client that successfully joins a fresh room becomes the room admin.
 
 This is a prototype scaffold, not a production security audit.
 
@@ -14,7 +10,8 @@ This is a prototype scaffold, not a production security audit.
 
 - Partiful-like invite UI without Partiful assets or branding.
 - PeerJS/WebRTC data-channel sync.
-- Host-run Node room peer using `peerjs`, `@roamhq/wrtc`, `ws`, and `xhr2`.
+- Relay-owned PeerJS room peer using `peerjs`, `@roamhq/wrtc`, `ws`, and `xhr2`.
+- Optional persistent party relay with signed, encrypted Nostr events routed over PeerJS data channels.
 - Public PeerJS Cloud signaling, with no self-hosted PeerServer.
 - Static PWA hosting. The room host only needs the app URL for generated invites.
 - Room invite QR in the terminal and inside the PWA.
@@ -25,6 +22,8 @@ This is a prototype scaffold, not a production security audit.
 - PWA manifest and service worker for install/offline app shell.
 
 ## Quick start
+
+Requires Node 22.12+ for built-in `node:sqlite` relay storage.
 
 Pick a short slug for the party and run the host:
 
@@ -57,7 +56,13 @@ npm run dev
 Then start a local room host pointed at Vite:
 
 ```bash
-npm run start -- friday-rooftop --app-url http://localhost:4273/
+npm run start -- friday-rooftop --app-url http://localhost:42729/
+```
+
+Or run both with one command:
+
+```bash
+npm run local -- friday-rooftop
 ```
 
 The local start command reuses `host/data/<session-id>.json`, including the saved room secret and admin records.
@@ -120,10 +125,50 @@ Useful flags:
 
 | Flag | Purpose |
 | --- | --- |
-| `--room` | Human room name; also becomes the deterministic room peer ID. |
-| `--app-url` | URL where the static PWA is hosted. Defaults to `HOST_URL` or `APP_URL`, then `host` from `~/.party-p2p/.partyrc`, then `http://localhost:4273/`. Use `https://robertinglin.github.io/party-p2p/` for GitHub Pages. |
+| `--room` | Human room name. The invite uses the local relay's stable PeerJS room ID. |
+| `--app-url` | URL where the static PWA is hosted. Defaults to `HOST_URL` or `APP_URL`, then `host` from `~/.party-p2p/.partyrc`, then `http://localhost:42729/`. Use `https://robertinglin.github.io/party-p2p/` for GitHub Pages. |
 | `--secret` | Override/generated room secret. If omitted, a random one is saved in `host/data/<room>.json`. |
 | `--ice` | Comma-separated ICE server URLs. Defaults to Google STUN for convenience. |
+
+## Persistent relay
+
+Run a relay/cache process with:
+
+```bash
+npx party-p2p relay
+```
+
+Host processes also do this automatically. On startup, `npx party-p2p <room>` connects to the local relay IPC endpoint from `~/.party-p2p/relay.json`; if that relay is not running, it starts one. Browser clients connect to the relay peer, and the relay routes `client/hello`, mutations, and Nostr messages to the local host over IPC.
+
+Useful relay flags:
+
+```bash
+npx party-p2p relay \
+  --host 127.0.0.1 \
+  --port 42777 \
+  --storage ~/.party-p2p/relay \
+  --max-events 10000 \
+  --relay-peer peerjs:party-p2p-relay-other-relay
+```
+
+The relay's local port is IPC for host processes and local tests. It stores accepted events in `events.sqlite` with Node's built-in `node:sqlite` module. The relay is not a Nostr server; it owns two PeerJS peers: a room peer for browser clients and an explicit `-relay` peer for relay-to-relay traffic. Nostr relay probes, history queries, and mirroring use the `-relay` peer so relays do not connect to crowded client rooms.
+
+The relay accepts Nostr protocol arrays on IPC and PeerJS data channels, validates that stored events are `party-p2p` events, routes room state messages to the host process, and mirrors accepted events to configured relay peers. If a relay hint omits the suffix, it is normalized to `peerjs:<peerId>-relay`.
+
+Accepted party events are real Nostr events signed and verified with `nostr-tools`. Chat message payloads must be encrypted with the invite room secret before publishing; the relay validates hashes and Nostr signatures but cannot read message text.
+
+Clients keep a per-party relay book in browser storage. They remember the invite relay mesh address, relays announced by the room relay, and relays they see later in `relay.hints`. The browser can probe known `peerjs:<roomPeerId>-relay` relays with a tiny Nostr `REQ`, mark live/offline status, query live relays, dedupe events by Nostr event id, and send known relay hints back to the room relay.
+
+Relays also learn `relayHints` from hosts and clients. Learned relay addresses are normalized, deduped, and dialed by the relay's PeerJS peer so relay-to-relay mirroring can form automatically. Relay mesh links are retried with backoff after disconnects. Persisted event catch-up uses a Merkle tree over signed Nostr event ids: relays compare roots, request mismatched branches, ask for missing event ids, and receive those events through the normal signed `["EVENT", event]` path. Room protocol traffic is relayed over that mesh too: a client can connect to any reachable low-load relay room peer, and `client/hello`, mutations, direct host replies, broadcasts, and close notices are routed between relays until they reach the host relay or client relay.
+
+Clients ask known relay mesh peers for `relay.status` before joining the room. They prefer a live relay with the lowest advertised client load and fall back to the invite's room peer if no alternate relay can reach the host. If the selected route drops, the client refreshes relay status, reconnects to a live relay, and retries pending mutations with the same mutation ids until the host sends a matching `acceptedMutationId`. Host mutation handling is idempotent, so duplicate retries are safe.
+
+The relay also exposes:
+
+```text
+GET /health
+GET /
+```
 
 ## How it works
 
@@ -132,14 +177,18 @@ Static PWA host ── serves HTML/CSS/JS ── Browser PWA
                                              │
                                              │ WebRTC DataConnection
                                              │
-                                      Node room peer (peerjs + @roamhq/wrtc)
-      │                                           │
-      └──── signaling only via PeerJS Cloud ──────┘
+                                      Party relay peer (peerjs + @roamhq/wrtc)
+                                             │
+                                             │ loopback IPC
+                                             │
+                                      Host room state process
+      │
+      └──── signaling only via PeerJS Cloud
 ```
 
-PeerJS Cloud brokers PeerJS connection setup. The static app host only serves assets. The event state itself is sent through WebRTC `DataConnection` messages to the host room peer. The host room peer validates the room secret proof and admin token, applies mutations, persists state locally, then broadcasts the updated state to connected clients.
+PeerJS Cloud brokers PeerJS connection setup. The static app host only serves assets. The event state itself is sent through WebRTC `DataConnection` messages to the relay room peer. The relay forwards room protocol messages to the host process over local IPC. The host validates the room secret proof and admin token, applies mutations, persists state locally, then asks the relay to send replies or broadcast the updated state to connected clients.
 
-If the public PeerJS Cloud signaling socket drops, the Node host reconnects with the same room peer ID. Existing WebRTC data channels can stay open while the reconnect lets later guests join.
+If the public PeerJS Cloud signaling socket drops, the relay process owns reconnecting the stable room peer ID. Existing WebRTC data channels can stay open while the reconnect lets later guests join.
 
 ## First admin rule
 
@@ -174,7 +223,8 @@ client/
   src/                 React PWA source
   public/              manifest, service worker, icons
 host/
-  host.cjs             host-run room peer and local state owner
+  host.cjs             local room state owner connected to relay IPC
+  relay.cjs            PeerJS room relay, IPC router, and Nostr event cache
   nodePeer.cjs         PeerJS Node shims and PeerJS Cloud client setup
   data/                local room state, created at runtime
 ```
@@ -186,6 +236,11 @@ host/
 - `client/mutation`: RSVP/post/comment/admin event mutation.
 - `host/state`: full state snapshot broadcast after each accepted mutation.
 - `host/error`: rejection or connection error.
+- `["EVENT", nostrEvent]`: publish one signed encrypted party event through the room relay.
+- `["REQ", subscriptionId, filter]`: query or subscribe to party relay history/live events.
+- `["CLOSE", subscriptionId]`: close a relay subscription.
+- `relay.hints`: share known `peerjs:<roomPeerId>-relay` relays so clients and relays can auto-mesh without dialing client rooms.
+- `relay.events.root` / `relay.events.branch` / `relay.events.want`: relay-only Merkle sync for eventually consistent persisted event logs.
 
 ## Production hardening ideas
 
